@@ -1,11 +1,11 @@
-;;; multi-mode.el --- support for multiple major modes
+;;; multi-mode.el --- support for multiple major modes  -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2003, 2004, 2007, 2009  Free Software Foundation, Inc.
+;; Copyright (C) 2003-2021  Free Software Foundation, Inc.
 
 ;; Author: Dave Love <fx@gnu.org>
 ;; Keywords: languages, extensions, files
 ;; Created: Sept 2003
-;; $Revision: 1.13 $
+;; Version: 1.14
 ;; URL: http://www.loveshack.ukfsn.org/emacs
 
 ;; This file is free software; you can redistribute it and/or modify
@@ -84,10 +84,6 @@
 ;; Problems:
 ;; * C-x C-v in the indirect buffer just kills both buffers.  (Perhaps an
 ;;   Emacs bug.)
-;; * Font-locking doesn't always work properly in Emacs 21, due to lack
-;;   of `font-lock-dont-widen', e.g. see the commentary in
-;;   haskell-latex.el.
-;; * C-x C-w in Emacs 21 may change the mode when it shouldn't.
 ;; * Flyspell needs modifying so as not to cause trouble with this.
 ;;   For the moment we hack the Flyspell hook functions.
 ;; * The behaviour of the region can appear odd if point and mark are in
@@ -164,27 +160,26 @@ Buffer local.")
   "Original value of `imenu-create-index-function' for the buffer's mode.")
 (make-variable-buffer-local 'multi-late-index-function)
 
+(define-obsolete-variable-alias 'multi-alist 'multi-mode-alist nil)
 (defvar multi-mode-alist nil
   "Alist of elements (MODE . FUNCTION) specifying a buffer's multiple modes.
 MODE is a major mode and FUNCTION is a function used as an element of
 `multi-chunk-fns' or nil.  Use nil if MODE is detected by another element
 of the alist.")
 
-(if (fboundp 'define-obsolete-variable-alias)
-    (define-obsolete-variable-alias 'multi-alist 'multi-mode-alist)
-  (make-obsolete-variable 'multi-alist 'multi-mode-alist))
-
 ;; See the commentary below.
 (defun multi-hack-local-variables ()
   "Like `hack-local-variables', but ignore `mode' items."
-  (let ((late-hack (symbol-function 'hack-one-local-variable)))
-    (fset 'hack-one-local-variable
-	  (lambda (var val)
-	    (unless (eq var 'mode)
-	      (funcall late-hack var val))))
+  (let ((f (lambda (orig-fun var val)
+	     (unless (eq var 'mode)
+	       (funcall orig-fun var val)))))
     (unwind-protect
-	(hack-local-variables)
-      (fset 'hack-one-local-variable late-hack))))
+	(progn
+	  (advice-add 'hack-one-local-variable :around f)
+	  (hack-local-variables))
+      (advice-remove 'hack-one-local-variable f))))
+
+(defvar multi-mode)
 
 (defun multi-install-mode (mode &optional chunk-fn base)
   "Add MODE to the multiple major modes supported by the current buffer.
@@ -235,30 +230,16 @@ is the base mode."
 	      (funcall mode))
 	    ;; Now we can make it local:
 	    (set (make-local-variable 'multi-mode) t)
-	    ;; Use file's local variables section to set variables in
-	    ;; this buffer.  (Don't just copy local variables from the
-	    ;; base buffer because it may have set things locally that
-	    ;; we don't want in the other modes.)  We need to prevent
-	    ;; `mode' being processed and re-setting the major mode.
-	    ;; It all goes badly wrong if `hack-one-local-variable' is
-	    ;; advised.  The appropriate mechanism to get round this
-	    ;; appears to be `ad-with-originals', but we don't want to
-	    ;; pull in the advice package unnecessarily.  `flet'-like
-	    ;; mechanisms lose with advice because `fset' acts on the
-	    ;; advice anyway.
-	    (if (featurep 'advice)
-		(ad-with-originals (hack-one-local-variable)
-		  (multi-hack-local-variables))
-	      (multi-hack-local-variables))
+	    (multi-hack-local-variables)
 	    ;; Indentation should first narrow to the chunk.  Modes
 	    ;; should normally just bind `indent-line-function' to
 	    ;; handle indentation.
 	    (when indent-line-function ; not that it should ever be nil...
-	      (set (make-local-variable 'indent-line-function)
-		   `(lambda ()
-		      (save-restriction
-			(multi-narrow-to-chunk)
-			(,indent-line-function)))))
+	      (add-function :around (local 'indent-line-function)
+	                    (lambda (orig-fun &rest args)
+		              (save-restriction
+			        (multi-narrow-to-chunk)
+			        (apply orig-fun args)))))
 	    ;; Now handle the case where the mode binds TAB directly.
 	    ;; Bind it in an overriding map to use the local definition,
 	    ;; but narrowed to the chunk.
@@ -268,11 +249,11 @@ is the base mode."
 		(push (cons multi-mode
 			    (let ((map (make-sparse-keymap)))
 			      (define-key map "\t"
-				`(lambda ()
-				   (interactive)
-				   (save-restriction
-				     (multi-narrow-to-chunk)
-				     (call-interactively ',tab))))
+				(lambda ()
+				  (interactive)
+				  (save-restriction
+				    (multi-narrow-to-chunk)
+				    (call-interactively tab))))
 			      map))
 		      minor-mode-map-alist)))
 	    (setq multi-normal-fontify-function
@@ -290,14 +271,14 @@ is the base mode."
 	    ;; Kill the base buffer along with the indirect one; careful not
 	    ;; to infloop.
 	    (add-hook 'kill-buffer-hook
-		      '(lambda ()
-			 (setq kill-buffer-hook nil)
-			 (kill-buffer (buffer-base-buffer)))
+		      (lambda ()
+			(setq kill-buffer-hook nil)
+			(kill-buffer (buffer-base-buffer)))
 		      t t)
 	    ;; This should probably be at the front of the hook list, so
 	    ;; that other hook functions get run in the (perhaps)
 	    ;; newly-selected buffer.
-	    (add-hook 'post-command-hook 'multi-select-buffer nil t)
+	    (add-hook 'post-command-hook #'multi-select-buffer nil t)
 	    ;; Avoid the uniqified name for the indirect buffer in the
 	    ;; mode line.
 	    (setq mode-line-buffer-identification
@@ -306,7 +287,7 @@ is the base mode."
 	    (setq buffer-file-coding-system coding)
 	    ;; For benefit of things like VC
 	    (setq buffer-file-name file)
-	    (vc-find-file-hook))
+	    (vc-refresh-state))
 	  ;; Propagate updated values of the relevant buffer-local
 	  ;; variables to the indirect buffers.
 	  (dolist (x alist)
@@ -373,8 +354,7 @@ Fontifies chunk-by-chunk within the region from START for up to
 Works piece-wise in all the chunks with the same major mode.
 Assigned to `imenu-create-index-function'."
   (let ((selected-mode major-mode)
-	imenu-alist			; accumulator
-	last mode)
+	imenu-alist)			; accumulator
     (multi-map-over-chunks
      (point-min) (point-max)
      (lambda ()
@@ -454,8 +434,7 @@ Destructively modifies `multi-mode-list' to avoid consing in
 Return a list (MODE START END), the value returned by the function in the
 list for which START is closest to POS (and before it); i.e. the innermost
 mode is selected.  POS defaults to point."
-  (let ((fns multi-chunk-fns)
-	(start (point-min))
+  (let ((start (point-min))
 	(mode (with-current-buffer (multi-base-buffer)
 		major-mode))
 	(end (point-max))
@@ -499,28 +478,6 @@ mode is selected.  POS defaults to point."
 	  (multi-install-mode (car elt) (cdr elt))))
     (fundamental-mode)
     (error "`multi-mode-alist' not defined for multi-mode")))
-
-;; In 21.3, Flyspell breaks things, apparently by getting an error in
-;; post-command-hook and thus clobbering it.  In development code it
-;; doesn't do that, but does check indirect buffers it shouldn't.  I'm
-;; not sure exactly how this happens, but checking flyspell-mode in
-;; the hook functions cures this.  For the moment, we'll hack this up.
-;; (Let's not bring advice into it...)
-(eval-after-load "flyspell"
-  '(progn
-     (defalias 'flyspell-post-command-hook
-       `(lambda ()
-	  ,(concat (documentation 'flyspell-post-command-hook)
-		   "\n\n[Wrapped by multi-mode.]")
-	  (if flyspell-mode
-	   (funcall ,(symbol-function 'flyspell-post-command-hook)))))
-
-     (defalias 'flyspell-pre-command-hook
-       `(lambda ()
-	  (concat (documentation 'flyspell-pre-command-hook)
-		  "\n\n[Wrapped by multi-mode.]")
-	  (if 'flyspell-mode
-	      (funcall ,(symbol-function 'flyspell-pre-command-hook)))))))
 
 ;; This is useful in composite modes to determine whether a putative
 ;; major mode is safe to invoke.
