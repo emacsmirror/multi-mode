@@ -19,7 +19,7 @@
 ;; GNU General Public License for more details.
 
 ;; You should have received a copy of the GNU General Public License
-;; along with GNU Emacs.  If not, see <http://www.gnu.org/licenses/>.
+;; along with GNU Emacs.  If not, see <https://www.gnu.org/licenses/>.
 
 ;;; Commentary:
 
@@ -55,7 +55,7 @@
 
 ;; Maybe it won't turn out to be the best approach, but it currently
 ;; seems to me to be better than the approach used by MMM mode
-;; <URL:http://mmm-mode.sourceforge.net/>, and is a lot less code.  I
+;; <URL:https://mmm-mode.sourceforge.net/>, and is a lot less code.  I
 ;; suspect doing the job any better would require fairly serious
 ;; surgery on buffer behaviour.  For instance, consider being able
 ;; programmatically to treat discontinuous buffer regions as
