@@ -1,6 +1,6 @@
 ;;; multi-mode.el --- support for multiple major modes  -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2003-2021  Free Software Foundation, Inc.
+;; Copyright (C) 2003-2024  Free Software Foundation, Inc.
 
 ;; Author: Dave Love <fx@gnu.org>
 ;; Keywords: languages, extensions, files
@@ -120,7 +120,6 @@
 
 (require 'font-lock)
 (require 'imenu)
-(eval-when-compile (require 'advice))
 
 (defvar multi-indirect-buffers-alist nil
   "Alist of direct and indirect buffers v. major modes.
@@ -378,7 +377,7 @@ Assigned to `imenu-create-index-function'."
     (forward-char)
     t))
 
-(eval-when-compile (defvar syntax-ppss-last))
+(defvar syntax-ppss-last)
 
 (defun multi-narrow-to-chunk ()
   "Narrow to the current chunk."
